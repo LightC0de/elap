@@ -19,6 +19,9 @@ most macOS-version-sensitive code.
 - [skills.md](skills.md) — conventions, display-layer safety, boundaries.
 - [cli-spec.md](cli-spec.md) — full CLI specification.
 
+## Required after every code change
+- **Always run `swift test` after making any code change** and confirm all tests pass before reporting the fix as done.
+
 ## Hard boundaries
 - **NEVER run `git commit`, `git push`, or `git add`** — the developer handles all git.
 - **Never** strand the user with the built-in display off; always preserve a recovery path.

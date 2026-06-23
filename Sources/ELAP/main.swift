@@ -140,6 +140,10 @@ struct DisplayInfo {
     let isBuiltIn: Bool
     let isActive: Bool
     let bounds: CGRect
+    // Physical screen size in millimetres from EDID. Virtual/headless displays (macOS dummy
+    // framebuffers, DisplayLink dock placeholders) report .zero here because they have no
+    // physical panel. Used to distinguish real hardware from virtual displays.
+    let physicalSize: CGSize
 }
 
 // State-file path. A disabled display vanishes from CGGetOnlineDisplayList, so we persist
@@ -176,17 +180,21 @@ func fetchDisplays(verbose: Bool = false) -> [DisplayInfo] {
     CGGetOnlineDisplayList(count, &ids, &count)
 
     var infos: [DisplayInfo] = ids.map { id in
-        let builtIn = CGDisplayIsBuiltin(id) != 0
-        let active  = CGDisplayIsActive(id) != 0
-        let bounds  = CGDisplayBounds(id)
+        let builtIn      = CGDisplayIsBuiltin(id) != 0
+        let active       = CGDisplayIsActive(id) != 0
+        let bounds       = CGDisplayBounds(id)
+        let physicalSize = CGDisplayScreenSize(id)
         if verbose {
             let kind  = builtIn ? "built-in" : "external"
             let state = active  ? "active"   : "INACTIVE"
             let w     = Int(bounds.width)
             let h     = Int(bounds.height)
-            print("[verbose] Display \(id): \(kind), \(state), \(w)x\(h)")
+            let pw    = Int(physicalSize.width)
+            let ph    = Int(physicalSize.height)
+            let phys  = (pw > 0 || ph > 0) ? "\(pw)x\(ph)mm" : "virtual"
+            print("[verbose] Display \(id): \(kind), \(state), \(w)x\(h), \(phys)")
         }
-        return DisplayInfo(id: id, isBuiltIn: builtIn, isActive: active, bounds: bounds)
+        return DisplayInfo(id: id, isBuiltIn: builtIn, isActive: active, bounds: bounds, physicalSize: physicalSize)
     }
 
     // Recovery: if no built-in appears in the online list, it was previously disabled and
@@ -211,8 +219,8 @@ func fetchDisplays(verbose: Bool = false) -> [DisplayInfo] {
         }
 
         if let id = recoveredID {
-            // isActive: false, bounds: .zero — it is invisible/offline.
-            infos.append(DisplayInfo(id: id, isBuiltIn: true, isActive: false, bounds: .zero))
+            // isActive: false, bounds/physicalSize: .zero — it is invisible/offline.
+            infos.append(DisplayInfo(id: id, isBuiltIn: true, isActive: false, bounds: .zero, physicalSize: .zero))
         }
     }
 
@@ -222,15 +230,28 @@ func fetchDisplays(verbose: Bool = false) -> [DisplayInfo] {
 // MARK: ─────────────────────────────────────────────────────────────────────
 // MARK: §2.4 helpers (internal, for testability)
 
-// Returns true if any external display is currently active (composited by WindowServer).
-// Extracted as an internal function so tests can exercise it without spawning the full CLI.
+// Returns true if any real external display is currently active (composited by WindowServer).
+// Filters out virtual/headless displays (physicalSize == .zero) — macOS and some USB-C docks
+// create dummy framebuffers that appear active but have no physical panel behind them.
 func hasActiveExternalDisplay(_ displays: [DisplayInfo]) -> Bool {
-    displays.contains { !$0.isBuiltIn && $0.isActive }
+    displays.contains {
+        !$0.isBuiltIn &&
+        $0.isActive &&
+        ($0.physicalSize.width > 0 || $0.physicalSize.height > 0)
+    }
 }
 
 // Returns the first built-in display in the list, or nil if none is present.
 func builtInDisplay(in displays: [DisplayInfo]) -> DisplayInfo? {
     displays.first { $0.isBuiltIn }
+}
+
+// Returns true when the built-in should be re-enabled: no external display is active
+// AND the built-in is currently disabled. Pure function — safe to call from tests.
+func shouldReenableBuiltIn(displays: [DisplayInfo]) -> Bool {
+    guard !hasActiveExternalDisplay(displays) else { return false }
+    guard let builtin = builtInDisplay(in: displays) else { return false }
+    return !builtin.isActive
 }
 
 // MARK: ─────────────────────────────────────────────────────────────────────
@@ -581,6 +602,26 @@ extension ELAPCli {
 private var _watchAPI: SkyLightAPI? = nil
 private var _watchVerbose: Bool = false
 
+// Checks whether the built-in display needs to be re-enabled and acts if so.
+// Must be called on the main thread only. Safe to call repeatedly — guarded by
+// shouldReenableBuiltIn so a second call after a successful re-enable is a no-op.
+func watchCheckAndReenableIfNeeded() {
+    let displays = fetchDisplays(verbose: _watchVerbose)
+    guard shouldReenableBuiltIn(displays: displays) else {
+        if _watchVerbose { print("[watch] No action: external still active or built-in already on.") }
+        return
+    }
+    guard let builtin = builtInDisplay(in: displays) else { return }
+    print("All external displays disconnected — enabling built-in display…")
+    do {
+        try _watchAPI?.setEnabled(builtin.id, true)
+        clearBuiltInDisplayID()
+        print("Built-in display enabled.")
+    } catch {
+        printErr(error)
+    }
+}
+
 extension ELAPCli {
     struct Watch: ParsableCommand {
         static var configuration = CommandConfiguration(
@@ -597,41 +638,36 @@ extension ELAPCli {
             } catch let e as DTError {
                 printErr(e)
                 throw ExitCode(1)
+            } catch {
+                printErr(error)
+                throw ExitCode(1)
             }
 
             print("Watching display changes. Built-in will be enabled automatically")
             print("when all external displays disconnect. Press Ctrl+C to stop.")
 
+            // Fast path: CGDisplayRegisterReconfigurationCallback fires for display changes.
+            // Dispatched async so CGBeginDisplayConfiguration (inside setEnabled) is never
+            // called re-entrantly from within the reconfiguration callback itself.
+            // NOTE: in some CLI contexts this callback may not be delivered reliably;
+            // the timer below is the primary reliable mechanism.
             CGDisplayRegisterReconfigurationCallback({ _, flags, _ in
-                // The callback fires twice per change (begin + end). Act only on the post-change
-                // notification, and only when a display was removed.
                 guard !flags.contains(.beginConfigurationFlag) else { return }
-                guard flags.contains(.removeFlag) else { return }
-
-                if _watchVerbose { print("[watch] External display removed, checking state…") }
-
-                let displays = fetchDisplays(verbose: _watchVerbose)
-
-                // If any external is still active, nothing to do.
-                guard !displays.contains(where: { !$0.isBuiltIn && $0.isActive }) else { return }
-
-                guard let builtin = builtInDisplay(in: displays) else { return }
-
-                if builtin.isActive {
-                    if _watchVerbose { print("[watch] No external displays; built-in already enabled.") }
-                    return
-                }
-
-                print("All external displays disconnected — enabling built-in display…")
-                do {
-                    try _watchAPI?.setEnabled(builtin.id, true)
-                    clearBuiltInDisplayID()
-                    print("Built-in display enabled.")
-                } catch {
-                    printErr(error)
-                }
+                if _watchVerbose { print("[watch] Display change (flags: \(flags.rawValue)), scheduling check…") }
+                DispatchQueue.main.async { watchCheckAndReenableIfNeeded() }
             }, nil)
 
+            // Primary mechanism: poll every 2 seconds. CGDisplayRegisterReconfigurationCallback
+            // delivery is unreliable in CLI (non-app-bundle) processes because the callback is
+            // tied to the WindowServer notification port and may not be delivered when the
+            // process has no active GUI session. Polling via RunLoop timer is always reliable.
+            Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { _ in
+                watchCheckAndReenableIfNeeded()
+            }
+
+            // RunLoop.main.run() is required (not dispatchMain) because
+            // CGDisplayRegisterReconfigurationCallback is a CFRunLoop-based mechanism — it
+            // delivers callbacks through the main run loop, not the GCD main queue.
             RunLoop.main.run()
         }
     }

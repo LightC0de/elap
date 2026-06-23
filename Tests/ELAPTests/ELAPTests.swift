@@ -84,8 +84,13 @@ final class ELAPTests: XCTestCase {
 
     // MARK: §hasActiveExternalDisplay
 
-    private func makeDisplay(id: CGDirectDisplayID, isBuiltIn: Bool, isActive: Bool) -> DisplayInfo {
-        DisplayInfo(id: id, isBuiltIn: isBuiltIn, isActive: isActive, bounds: .zero)
+    private func makeDisplay(
+        id: CGDirectDisplayID,
+        isBuiltIn: Bool,
+        isActive: Bool,
+        physicalSize: CGSize = CGSize(width: 280, height: 175)  // non-zero = real panel
+    ) -> DisplayInfo {
+        DisplayInfo(id: id, isBuiltIn: isBuiltIn, isActive: isActive, bounds: .zero, physicalSize: physicalSize)
     }
 
     func testHasActiveExternalDisplay_externalActive() {
@@ -115,6 +120,17 @@ final class ELAPTests: XCTestCase {
         XCTAssertFalse(hasActiveExternalDisplay([]))
     }
 
+    func testHasActiveExternalDisplay_virtualExternalNotCounted() {
+        // A virtual/headless display (physicalSize = .zero) must not count as a real external.
+        // This is the core bug: macOS and USB-C docks create dummy framebuffers that appear
+        // active in CGGetOnlineDisplayList even when no physical monitor is connected.
+        let displays = [
+            makeDisplay(id: 1,  isBuiltIn: true,  isActive: false),
+            makeDisplay(id: 36, isBuiltIn: false, isActive: true, physicalSize: .zero),
+        ]
+        XCTAssertFalse(hasActiveExternalDisplay(displays))
+    }
+
     // MARK: §builtInDisplay(in:)
 
     func testBuiltInDisplayFound() {
@@ -127,6 +143,78 @@ final class ELAPTests: XCTestCase {
     func testBuiltInDisplayNilWhenAbsent() {
         let displays = [makeDisplay(id: 8, isBuiltIn: false, isActive: true)]
         XCTAssertNil(builtInDisplay(in: displays))
+    }
+
+    // MARK: §shouldReenableBuiltIn
+
+    // The watch command calls this to decide whether to re-enable the built-in display.
+    // It should return true only when: no external is active AND built-in is disabled.
+
+    func testShouldReenableBuiltIn_noExternalBuiltInDisabled() {
+        // The target scenario: external gone, built-in off → re-enable.
+        let displays = [makeDisplay(id: 1, isBuiltIn: true, isActive: false)]
+        XCTAssertTrue(shouldReenableBuiltIn(displays: displays))
+    }
+
+    func testShouldReenableBuiltIn_externalStillActive() {
+        // External still connected while built-in is off → do NOT re-enable yet.
+        let displays = [
+            makeDisplay(id: 1, isBuiltIn: true,  isActive: false),
+            makeDisplay(id: 2, isBuiltIn: false, isActive: true),
+        ]
+        XCTAssertFalse(shouldReenableBuiltIn(displays: displays))
+    }
+
+    func testShouldReenableBuiltIn_builtInAlreadyActive() {
+        // Built-in already on, external gone → nothing to do.
+        let displays = [makeDisplay(id: 1, isBuiltIn: true, isActive: true)]
+        XCTAssertFalse(shouldReenableBuiltIn(displays: displays))
+    }
+
+    func testShouldReenableBuiltIn_bothActive() {
+        // Normal connected state: both active → no action.
+        let displays = [
+            makeDisplay(id: 1, isBuiltIn: true,  isActive: true),
+            makeDisplay(id: 2, isBuiltIn: false, isActive: true),
+        ]
+        XCTAssertFalse(shouldReenableBuiltIn(displays: displays))
+    }
+
+    func testShouldReenableBuiltIn_noDisplaysAtAll() {
+        // Edge case: empty list (shouldn't happen but must not crash).
+        XCTAssertFalse(shouldReenableBuiltIn(displays: []))
+    }
+
+    func testShouldReenableBuiltIn_virtualDisplayDoesNotBlock() {
+        // Exact scenario from the bug: built-in disabled, physical external gone, but macOS
+        // leaves a virtual dummy display (Display 36, physicalSize=.zero) in the online list.
+        // Without the physicalSize check, shouldReenableBuiltIn returned false and the built-in
+        // was never re-enabled.
+        let displays = [
+            makeDisplay(id: 1,  isBuiltIn: true,  isActive: false),
+            makeDisplay(id: 36, isBuiltIn: false, isActive: true, physicalSize: .zero),
+        ]
+        XCTAssertTrue(shouldReenableBuiltIn(displays: displays))
+    }
+
+    func testShouldReenableBuiltIn_multipleExternalsAllGone() {
+        // Multiple externals were connected; all disconnected, built-in was off → re-enable.
+        let displays = [
+            makeDisplay(id: 1, isBuiltIn: true,  isActive: false),
+            makeDisplay(id: 2, isBuiltIn: false, isActive: false),
+            makeDisplay(id: 3, isBuiltIn: false, isActive: false),
+        ]
+        XCTAssertTrue(shouldReenableBuiltIn(displays: displays))
+    }
+
+    func testShouldReenableBuiltIn_oneExternalRemainsActive() {
+        // Two externals, one unplugged but one still active → do NOT re-enable.
+        let displays = [
+            makeDisplay(id: 1, isBuiltIn: true,  isActive: false),
+            makeDisplay(id: 2, isBuiltIn: false, isActive: false),
+            makeDisplay(id: 3, isBuiltIn: false, isActive: true),
+        ]
+        XCTAssertFalse(shouldReenableBuiltIn(displays: displays))
     }
 
     // MARK: §waitForEnterOrTimeout edge cases
