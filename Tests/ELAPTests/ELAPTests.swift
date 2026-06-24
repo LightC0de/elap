@@ -131,6 +131,47 @@ final class ELAPTests: XCTestCase {
         XCTAssertFalse(hasActiveExternalDisplay(displays))
     }
 
+    // MARK: §shouldAutoDisableBuiltIn
+
+    // watch auto-disables the built-in when a real external reconnects (auto-manage mode).
+
+    func testShouldAutoDisableBuiltIn_externalActiveBuiltInActive() {
+        // Normal "both on" state after reconnect → should auto-disable.
+        let displays = [
+            makeDisplay(id: 1, isBuiltIn: true,  isActive: true),
+            makeDisplay(id: 2, isBuiltIn: false, isActive: true),
+        ]
+        XCTAssertTrue(shouldAutoDisableBuiltIn(displays: displays))
+    }
+
+    func testShouldAutoDisableBuiltIn_noExternalPresent() {
+        // No external → nothing to switch to; do not disable.
+        let displays = [makeDisplay(id: 1, isBuiltIn: true, isActive: true)]
+        XCTAssertFalse(shouldAutoDisableBuiltIn(displays: displays))
+    }
+
+    func testShouldAutoDisableBuiltIn_builtInAlreadyInactive() {
+        // Built-in already off → nothing to do.
+        let displays = [
+            makeDisplay(id: 1, isBuiltIn: true,  isActive: false),
+            makeDisplay(id: 2, isBuiltIn: false, isActive: true),
+        ]
+        XCTAssertFalse(shouldAutoDisableBuiltIn(displays: displays))
+    }
+
+    func testShouldAutoDisableBuiltIn_virtualExternalNotCounted() {
+        // Virtual external (physicalSize .zero) must not trigger auto-disable.
+        let displays = [
+            makeDisplay(id: 1,  isBuiltIn: true,  isActive: true),
+            makeDisplay(id: 36, isBuiltIn: false, isActive: true, physicalSize: .zero),
+        ]
+        XCTAssertFalse(shouldAutoDisableBuiltIn(displays: displays))
+    }
+
+    func testShouldAutoDisableBuiltIn_empty() {
+        XCTAssertFalse(shouldAutoDisableBuiltIn(displays: []))
+    }
+
     // MARK: §builtInDisplay(in:)
 
     func testBuiltInDisplayFound() {

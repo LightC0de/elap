@@ -601,22 +601,179 @@ extension ELAPCli {
 // cannot capture Swift closures, so we store shared state at module scope.
 private var _watchAPI: SkyLightAPI? = nil
 private var _watchVerbose: Bool = false
+// Tracks whether watch is in auto-manage mode: true after the first auto-enable (or if the
+// built-in was already disabled when watch started). In this mode, watch also auto-disables
+// the built-in when a real external display reconnects, completing the bidirectional cycle.
+private var _watchAutoModeActive: Bool = false
 
-// Checks whether the built-in display needs to be re-enabled and acts if so.
-// Must be called on the main thread only. Safe to call repeatedly — guarded by
-// shouldReenableBuiltIn so a second call after a successful re-enable is a no-op.
+// Returns true when the built-in should be disabled automatically: a real external is active
+// and the built-in is on. Used by watch's auto-manage mode. Pure function — safe to call from tests.
+func shouldAutoDisableBuiltIn(displays: [DisplayInfo]) -> Bool {
+    guard hasActiveExternalDisplay(displays) else { return false }
+    guard let builtin = builtInDisplay(in: displays) else { return false }
+    return builtin.isActive
+}
+
+private func watchTimestamp() -> String {
+    let f = DateFormatter()
+    f.dateFormat = "HH:mm:ss"
+    return f.string(from: Date())
+}
+
+// Diagnostic: the *raw* CGGetOnlineDisplayList as CoreGraphics reports it right now, with no
+// recovery/virtual-display filtering applied. This is the ground truth we compare against the
+// physical reality of the cable. Used for edge-triggered logging so a physical disconnect that
+// CoreGraphics fails to notice (stale per-process display cache — the suspected cause of the
+// "subsequent disconnects not detected" bug) becomes visible in the log.
+func rawOnlineDisplaySnapshot() -> String {
+    var count: UInt32 = 0
+    CGGetOnlineDisplayList(0, nil, &count)
+    var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
+    CGGetOnlineDisplayList(count, &ids, &count)
+
+    let parts = ids.map { id -> String in
+        let kind   = CGDisplayIsBuiltin(id) != 0 ? "builtin" : "ext"
+        let state  = CGDisplayIsActive(id)  != 0 ? "active"  : "inactive"
+        let online = CGDisplayIsOnline(id)  != 0 ? "online"  : "offline"
+        let sz     = CGDisplayScreenSize(id)
+        let phys   = (sz.width > 0 || sz.height > 0) ? "phys" : "virtual"
+        return "\(id)[\(kind),\(state),\(online),\(phys)]"
+    }
+    return "count=\(count) {\(parts.joined(separator: " "))}"
+}
+
+// Edge-triggered snapshot tracking: remembers the last raw CG snapshot so the watch loop can log
+// a line *only when the topology CoreGraphics reports actually changes*. Low-noise, and always on
+// (not gated behind --verbose) so the daemon log captures the moment of failure.
+private var _watchLastRawSnapshot: String? = nil
+
+// Resolves the absolute path of the currently-running executable. Used to re-exec a fresh copy
+// of ourselves. _NSGetExecutablePath is reliable even when launched via PATH (where argv[0] is
+// just "elap"); we canonicalize it with realpath to follow any symlinks.
+private func currentExecutablePath() -> String {
+    var size: UInt32 = 0
+    _NSGetExecutablePath(nil, &size)
+    var buf = [CChar](repeating: 0, count: Int(size) + 1)
+    if _NSGetExecutablePath(&buf, &size) == 0 {
+        if let resolved = realpath(buf, nil) {
+            defer { free(resolved) }
+            return String(cString: resolved)
+        }
+        return String(cString: buf)
+    }
+    return ProcessInfo.processInfo.arguments.first ?? "elap"
+}
+
+// Workaround for a CoreGraphics limitation observed on macOS: once this process performs a
+// display reconfiguration (CGCompleteDisplayConfiguration), its per-process display state
+// freezes — CGGetOnlineDisplayList stops updating and reconfiguration callbacks stop firing, so
+// every subsequent hot-plug/unplug becomes invisible to this process. Re-executing ourselves
+// yields a fresh WindowServer connection that sees current reality.
+//
+// Called only immediately after an actual toggle (i.e. on real display changes), so it never
+// busy-loops: a freshly-restarted process evaluates the just-settled state and finds nothing to
+// do, so it will not toggle (and thus not restart) again until the next real hot-plug event.
+//
+// On success execv never returns. On the (very unlikely) failure path we log and return so the
+// caller keeps watching in degraded mode rather than dying — preserving the recovery path.
+private func restartWatchForFreshCGState() {
+    print("[watch] \(watchTimestamp()) restarting watch to refresh CoreGraphics display state…")
+    fflush(stdout)
+    fflush(stderr)
+
+    let exePath = currentExecutablePath()
+    var argv = ProcessInfo.processInfo.arguments
+    if argv.isEmpty { argv = [exePath] } else { argv[0] = exePath }
+
+    // Preserve auto-manage mode across the restart so reconnect → auto-disable keeps working
+    // even when the restart happens with the built-in already on (see Watch.run startup).
+    setenv("ELAP_WATCH_AUTOMODE", _watchAutoModeActive ? "1" : "0", 1)
+
+    var cargs: [UnsafeMutablePointer<CChar>?] = argv.map { strdup($0) }
+    cargs.append(nil)
+
+    execv(exePath, &cargs)
+
+    // Only reached if execv failed.
+    perror("[watch] execv failed; continuing without restart")
+    fflush(stderr)
+    for p in cargs where p != nil { free(p) }
+}
+
+// Checks display state and acts if needed (enable or disable built-in).
+// Must be called on the main thread only. Safe to call repeatedly — all paths are guarded.
 func watchCheckAndReenableIfNeeded() {
+    // Capture CoreGraphics' raw view first. Edge-triggered: log (always, not just --verbose)
+    // whenever the raw topology changes. If a physical disconnect does NOT produce a line here,
+    // CoreGraphics handed us a stale display list — the prime suspect for missed disconnects.
+    let rawSnapshot = rawOnlineDisplaySnapshot()
+    if rawSnapshot != _watchLastRawSnapshot {
+        print("[watch] \(watchTimestamp()) CG topology changed: \(rawSnapshot)")
+        fflush(stdout)
+        _watchLastRawSnapshot = rawSnapshot
+    }
+
     let displays = fetchDisplays(verbose: _watchVerbose)
+    let hasExt   = hasActiveExternalDisplay(displays)
+
+    if _watchVerbose {
+        let builtInState = builtInDisplay(in: displays)?.isActive == true ? "on" : "off"
+        print("[watch] \(watchTimestamp()) tick — auto=\(_watchAutoModeActive), built-in=\(builtInState), real-ext=\(hasExt), raw=\(rawSnapshot)")
+        fflush(stdout)
+    }
+
+    // Auto-disable path: external reconnected while built-in is on (auto-manage mode only).
+    if _watchAutoModeActive && shouldAutoDisableBuiltIn(displays: displays) {
+        guard let builtin = builtInDisplay(in: displays) else { return }
+        if _watchVerbose { print("[watch] → auto-disable: real external appeared, built-in is on") }
+        print("External display connected — disabling built-in display… (built-in ID: \(builtin.id))")
+        saveBuiltInDisplayID(builtin.id)
+        do {
+            try _watchAPI?.setEnabled(builtin.id, false)
+            print("Built-in display disabled.")
+            // CoreGraphics freezes our display view after this reconfiguration; restart for a
+            // fresh connection so the next disconnect is still detected. (Does not return on success.)
+            restartWatchForFreshCGState()
+        } catch {
+            printErr(error)
+        }
+        return
+    }
+
+    // Auto-enable path: all externals gone while built-in is off.
     guard shouldReenableBuiltIn(displays: displays) else {
-        if _watchVerbose { print("[watch] No action: external still active or built-in already on.") }
+        if _watchVerbose {
+            let builtInActive = builtInDisplay(in: displays)?.isActive == true
+            let reason: String
+            if builtInActive && hasExt {
+                reason = "both on — steady state"
+            } else if !builtInActive && hasExt {
+                reason = "built-in off, external on — waiting for disconnect"
+            } else if builtInActive && !hasExt {
+                reason = "built-in on, no external — nothing to re-enable"
+            } else if !_watchAutoModeActive && shouldAutoDisableBuiltIn(displays: displays) {
+                reason = "auto-mode not yet active — connect external then disconnect to activate"
+            } else {
+                reason = "no built-in found in display list"
+            }
+            print("[watch] No action: \(reason).")
+        }
         return
     }
     guard let builtin = builtInDisplay(in: displays) else { return }
-    print("All external displays disconnected — enabling built-in display…")
+    if _watchVerbose { print("[watch] → re-enable: no real external, built-in is off") }
+    print("All external displays disconnected — enabling built-in display… (built-in ID: \(builtin.id))")
     do {
         try _watchAPI?.setEnabled(builtin.id, true)
         clearBuiltInDisplayID()
+        if !_watchAutoModeActive {
+            _watchAutoModeActive = true
+            if _watchVerbose { print("[watch] Auto-manage mode activated.") }
+        }
         print("Built-in display enabled.")
+        // CoreGraphics freezes our display view after this reconfiguration; restart for a fresh
+        // connection so a later reconnect/disconnect is still detected. (Does not return on success.)
+        restartWatchForFreshCGState()
     } catch {
         printErr(error)
     }
@@ -643,8 +800,26 @@ extension ELAPCli {
                 throw ExitCode(1)
             }
 
-            print("Watching display changes. Built-in will be enabled automatically")
-            print("when all external displays disconnect. Press Ctrl+C to stop.")
+            // If we were re-exec'd after a toggle (restartWatchForFreshCGState), restore the
+            // auto-manage state we carried across in the environment so the cycle continues
+            // seamlessly even when the built-in is currently on.
+            if ProcessInfo.processInfo.environment["ELAP_WATCH_AUTOMODE"] == "1" {
+                _watchAutoModeActive = true
+                if verbose { print("[verbose] Auto-manage mode restored after restart.") }
+            }
+
+            // If the built-in is already disabled (user ran `elap off` before starting watch),
+            // enter auto-manage mode immediately so the full cycle works from the first tick.
+            let initialDisplays = fetchDisplays(verbose: false)
+            if let b = builtInDisplay(in: initialDisplays), !b.isActive {
+                _watchAutoModeActive = true
+                if verbose { print("[verbose] Built-in already disabled — auto-manage mode active from start.") }
+            }
+
+            print("Watching display changes. Built-in will be managed automatically:")
+            print("  External disconnects → built-in turns on")
+            print("  External reconnects  → built-in turns off  (once auto-manage is active)")
+            print("Press Ctrl+C to stop.")
 
             // Fast path: CGDisplayRegisterReconfigurationCallback fires for display changes.
             // Dispatched async so CGBeginDisplayConfiguration (inside setEnabled) is never
@@ -653,7 +828,18 @@ extension ELAPCli {
             // the timer below is the primary reliable mechanism.
             CGDisplayRegisterReconfigurationCallback({ _, flags, _ in
                 guard !flags.contains(.beginConfigurationFlag) else { return }
-                if _watchVerbose { print("[watch] Display change (flags: \(flags.rawValue)), scheduling check…") }
+                if _watchVerbose {
+                    var parts: [String] = []
+                    if flags.contains(.addFlag)                 { parts.append("add") }
+                    if flags.contains(.removeFlag)              { parts.append("remove") }
+                    if flags.contains(.enabledFlag)             { parts.append("enabled") }
+                    if flags.contains(.disabledFlag)            { parts.append("disabled") }
+                    if flags.contains(.movedFlag)               { parts.append("moved") }
+                    if flags.contains(.setMainFlag)             { parts.append("setMain") }
+                    if flags.contains(.desktopShapeChangedFlag) { parts.append("shapeChanged") }
+                    let decoded = parts.isEmpty ? "0x\(String(flags.rawValue, radix: 16))" : parts.joined(separator: "|")
+                    print("[watch] \(watchTimestamp()) callback: \(decoded) — scheduling check…")
+                }
                 DispatchQueue.main.async { watchCheckAndReenableIfNeeded() }
             }, nil)
 
