@@ -1,0 +1,19 @@
+name: Bump Homebrew formula
+on:
+  release:
+    types: [published]
+jobs:
+  bump:
+    runs-on: macos-14
+    steps:
+      - name: Set up Homebrew
+        uses: Homebrew/actions/setup-homebrew@master
+      - name: Bump formula PR
+        env:
+          HOMEBREW_GITHUB_API_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          brew tap LightC0de/elap
+          brew bump-formula-pr --no-browse --no-fork \
+            --tag="${GITHUB_REF_NAME}" \
+            --url="https://github.com/LightC0de/elap/archive/refs/tags/${GITHUB_REF_NAME}.tar.gz" \
+            LightC0de/elap/elap

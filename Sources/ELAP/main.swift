@@ -417,6 +417,7 @@ struct ELAPCli: ParsableCommand {
 
             Exit codes: 0 = success, 1 = error, 2 = no external display found.
             """,
+        version: elapVersion,
         subcommands: [List.self, Status.self, On.self, Off.self, Toggle.self, Watch.self, Daemon.self]
     )
 }

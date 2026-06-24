@@ -258,6 +258,28 @@ final class ELAPTests: XCTestCase {
         XCTAssertFalse(shouldReenableBuiltIn(displays: displays))
     }
 
+    // MARK: §version
+
+    func testVersionIsSemver() {
+        XCTAssertFalse(elapVersion.isEmpty)
+        XCTAssertTrue(elapVersion.range(of: #"^\d+\.\d+\.\d+$"#, options: .regularExpression) != nil)
+    }
+
+    func testVersionMatchesChangelog() throws {
+        // CHANGELOG.md must contain an entry for the current version so the tag, binary, and
+        // changelog are always in sync. Catches the "forgot to update CHANGELOG before tagging" mistake.
+        let repoRoot = URL(fileURLWithPath: #file)
+            .deletingLastPathComponent()   // ELAPTests/
+            .deletingLastPathComponent()   // Tests/
+            .deletingLastPathComponent()   // package root
+        let changelogURL = repoRoot.appendingPathComponent("CHANGELOG.md")
+        let changelog = try String(contentsOf: changelogURL, encoding: .utf8)
+        XCTAssertTrue(
+            changelog.contains("[\(elapVersion)]"),
+            "CHANGELOG.md must contain an entry for version \(elapVersion)"
+        )
+    }
+
     // MARK: §waitForEnterOrTimeout edge cases
 
     func testWaitForEnterOrTimeoutZeroReturnsFalseImmediately() {

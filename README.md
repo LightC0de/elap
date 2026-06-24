@@ -29,6 +29,24 @@ release; see [Troubleshooting](#troubleshooting).
 
 ## Build & Install
 
+### Install via Homebrew (recommended)
+
+```sh
+brew tap LightC0de/elap
+brew install elap
+```
+
+Upgrade and uninstall:
+
+```sh
+brew upgrade elap
+brew uninstall elap
+```
+
+> Builds from source; requires Xcode Command Line Tools.
+
+### From source
+
 ```sh
 # Build release binary
 make build          # → .build/release/elap
