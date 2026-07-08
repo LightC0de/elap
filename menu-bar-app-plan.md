@@ -48,7 +48,7 @@ Tests: `Tests/ELAPTests/ELAPTests.swift` adds `@testable import ELAPCore` alongs
 ## Phase 2 — App skeleton + bundle pipeline
 
 New executable target `Sources/ELAPApp/`:
-- `ELAPApp.swift` — `@main` App with `MenuBarExtra(...).menuBarExtraStyle(.window)`; icon `"display"` / `"display.slash"` driven by state; `@NSApplicationDelegateAdaptor` for the quit hook; `NSApp.setActivationPolicy(.accessory)` so the unbundled dev binary shows no Dock icon.
+- `ELAPApp.swift` — `@main` App with `MenuBarExtra(...).menuBarExtraStyle(.window)`; icon `"display"` / `"display.slash"` driven by state; `@NSApplicationDelegateAdaptor` for the quit hook; `NSApp.setActivationPolicy(.accessory)` so the unbundled dev binary shows no Dock icon. Before SwiftUI takes over: if `CommandLine.arguments` contains `--version`, print `"ELAPApp \(elapVersion) (build \(elapBuildNumber))"` to stdout and exit(0) — mirrors the CLI's `--version` (`elapVersion`/`elapBuildNumber` from `ELAPCore`, same `BuildNumberPlugin` wired onto the `ELAPApp` target in `Package.swift`), so the installed app version can be checked from Terminal (`ELAP.app/Contents/MacOS/ELAPApp --version`) without opening the UI.
 - `SettingsPanelView.swift` — the panel.
 
 `scripts/make-app.sh` (+ Makefile target `app`; `dist/` in `.gitignore`):
@@ -83,7 +83,7 @@ New executable target `Sources/ELAPApp/`:
 ## Phase 6 — Safety hardening + polish
 
 - `applicationShouldTerminate`: if `wouldStrandUser(fetchDisplays())` → run helper `on` (bounded wait) before quitting; otherwise leave display state as the user set it.
-- Icon state polish, version in panel footer, README/CHANGELOG updates, new `.claude/app-spec.md` (cli-spec.md untouched), bump `elapVersion` with matching CHANGELOG entry (required by `testVersionMatchesChangelog`).
+- Icon state polish, version + build number in panel footer (`"\(elapVersion) (build \(elapBuildNumber))"`, same format as `--version`), README/CHANGELOG updates, new `.claude/app-spec.md` (cli-spec.md untouched), bump `elapVersion` with matching CHANGELOG entry (required by `testVersionMatchesChangelog`).
 - Final pass: `swift test`, `swift build -c release`, `./scripts/make-app.sh`, manual CLI regression (`list`, `status`, `off/on`, `watch`, `daemon status`).
 
 ## Risks & mitigations

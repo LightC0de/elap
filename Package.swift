@@ -12,7 +12,8 @@ let package = Package(
     targets: [
         .target(
             name: "ELAPCore",
-            path: "Sources/ELAPCore"
+            path: "Sources/ELAPCore",
+            plugins: ["BuildNumberPlugin"]
         ),
         .executableTarget(
             name: "ELAP",
@@ -26,6 +27,11 @@ let package = Package(
             name: "ELAPTests",
             dependencies: ["ELAP", "ELAPCore"],
             path: "Tests/ELAPTests"
+        ),
+        .plugin(
+            name: "BuildNumberPlugin",
+            capability: .buildTool(),
+            path: "Plugins/BuildNumberPlugin"
         )
     ]
 )

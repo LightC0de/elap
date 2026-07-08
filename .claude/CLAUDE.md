@@ -15,6 +15,17 @@ most macOS-version-sensitive code.
 - Build: `swift build -c release` → `.build/release/elap`
 - Run: `swift run ELAP <subcommand>`
 
+## Versioning
+- `elapVersion` (`Sources/ELAPCore/Version.swift`) is a manually-bumped semver string tied to
+  `CHANGELOG.md` — `testVersionMatchesChangelog` requires a matching `[x.y.z]` entry. Bump it
+  only as part of a real release, never automatically.
+- `elapBuildNumber` is a separate, purely informational counter that auto-increments on
+  **every** build (`swift build`/`swift run`/`swift test`, any trigger) via the SwiftPM
+  prebuild plugin `Plugins/BuildNumberPlugin`, which generates `BuildInfo.swift` into
+  `.build/` (gitignored, resets on `make clean`/fresh clone). Do not "fix" it if it looks like
+  it's changing on its own — that's the intended behavior. `elap --version` prints
+  `<elapVersion> (build <elapBuildNumber>)`.
+
 ## More docs
 - [skills.md](skills.md) — conventions, display-layer safety, boundaries.
 - [cli-spec.md](cli-spec.md) — full CLI specification.
