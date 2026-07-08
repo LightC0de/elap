@@ -12,12 +12,14 @@ struct ELAPMenuBarApp: App {
     }
 
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    @StateObject private var displayState = DisplayStateModel()
 
     var body: some Scene {
         MenuBarExtra {
             SettingsPanelView()
+                .environmentObject(displayState)
         } label: {
-            Image(systemName: "display")
+            Image(systemName: displayState.builtInIsOn ? "display" : "display.slash")
         }
         .menuBarExtraStyle(.window)
     }

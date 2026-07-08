@@ -63,6 +63,7 @@ New executable target `Sources/ELAPApp/`:
 - `DisplayStateModel.swift` — `@MainActor ObservableObject`: published `builtInIsOn`, `hasRealExternal`, `displays`. Refreshes via `fetchDisplays()` on panel open, a 2s timer while visible, and `CGDisplayRegisterReconfigurationCallback` (registered once at launch — reliable because the app never mutates in-process).
 - `ToggleHelper.swift` — locates helper binary: `Bundle.main…/Contents/MacOS/elap` → sibling of executable → `.build/{debug,release}/ELAP` (dev) → `/usr/local/bin/elap`. `async turnOff()/turnOn()` run `elap off --force` / `elap on` via `Process`, surfacing exit codes/stderr in the UI. No helper found → toggle disabled with explanation.
 - Panel: status row + toggle button. Guard: when no real external is active, the off action is disabled with the reason shown. The app pre-checks the guard and only then calls `off --force` (the guard replaces the CLI countdown). Note: CLI `--timeout` auto-revert can't be reused from a subprocess (`readLine()` on non-TTY returns nil instantly); a future auto-revert would be an app-side timer.
+- Panel footer: version + build number (`"\(elapVersion) (build \(elapBuildNumber))"`, same format as `--version`) — pulled forward from Phase 6 since it's a small, low-risk addition to the panel this phase already builds.
 
 **Verify:** toggle off/on repeatedly with external attached; status stays accurate across many cycles and hot-plugs (**stale-CG acceptance test**); `elap on` from Terminal still recovers; guard blocks with no external; `swift test`.
 
@@ -83,7 +84,7 @@ New executable target `Sources/ELAPApp/`:
 ## Phase 6 — Safety hardening + polish
 
 - `applicationShouldTerminate`: if `wouldStrandUser(fetchDisplays())` → run helper `on` (bounded wait) before quitting; otherwise leave display state as the user set it.
-- Icon state polish, version + build number in panel footer (`"\(elapVersion) (build \(elapBuildNumber))"`, same format as `--version`), README/CHANGELOG updates, new `.claude/app-spec.md` (cli-spec.md untouched), bump `elapVersion` with matching CHANGELOG entry (required by `testVersionMatchesChangelog`).
+- Icon state polish, README/CHANGELOG updates, new `.claude/app-spec.md` (cli-spec.md untouched), bump `elapVersion` with matching CHANGELOG entry (required by `testVersionMatchesChangelog`). (Version/build footer already added in Phase 3.)
 - Final pass: `swift test`, `swift build -c release`, `./scripts/make-app.sh`, manual CLI regression (`list`, `status`, `off/on`, `watch`, `daemon status`).
 
 ## Risks & mitigations
