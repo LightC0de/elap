@@ -23,6 +23,10 @@ clean:
 	rm -rf .build
 	@echo "Cleaned"
 
-.PHONY: build install uninstall clean
+## Assemble dist/ELAP.app (menu bar app + bundled CLI)
+app:
+	./scripts/make-app.sh
+
+.PHONY: build install uninstall clean app
 
 # Universal binary: swift build -c release --arch arm64 --arch x86_64 → output in .build/apple/Products/Release/elap

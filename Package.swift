@@ -23,6 +23,12 @@ let package = Package(
             ],
             path: "Sources/ELAP"
         ),
+        .executableTarget(
+            name: "ELAPApp",
+            dependencies: ["ELAPCore"],
+            path: "Sources/ELAPApp",
+            plugins: ["BuildNumberPlugin"]
+        ),
         .testTarget(
             name: "ELAPTests",
             dependencies: ["ELAP", "ELAPCore"],
