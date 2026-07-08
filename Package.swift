@@ -10,16 +10,21 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.3.0")
     ],
     targets: [
+        .target(
+            name: "ELAPCore",
+            path: "Sources/ELAPCore"
+        ),
         .executableTarget(
             name: "ELAP",
             dependencies: [
+                "ELAPCore",
                 .product(name: "ArgumentParser", package: "swift-argument-parser")
             ],
             path: "Sources/ELAP"
         ),
         .testTarget(
             name: "ELAPTests",
-            dependencies: ["ELAP"],
+            dependencies: ["ELAP", "ELAPCore"],
             path: "Tests/ELAPTests"
         )
     ]

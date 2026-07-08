@@ -8,6 +8,7 @@
 
 import XCTest
 @testable import ELAP
+@testable import ELAPCore
 
 final class ELAPTests: XCTestCase {
 
@@ -258,6 +259,43 @@ final class ELAPTests: XCTestCase {
         XCTAssertFalse(shouldReenableBuiltIn(displays: displays))
     }
 
+    // MARK: §wouldStrandUser
+
+    // Used by the app's quit hook: true only when the built-in is off AND no real external
+    // is active — i.e. the user would be left with no working display.
+
+    func testWouldStrandUser_builtInOffNoExternal() {
+        let displays = [makeDisplay(id: 1, isBuiltIn: true, isActive: false)]
+        XCTAssertTrue(wouldStrandUser(displays: displays))
+    }
+
+    func testWouldStrandUser_builtInOffExternalActive() {
+        let displays = [
+            makeDisplay(id: 1, isBuiltIn: true,  isActive: false),
+            makeDisplay(id: 2, isBuiltIn: false, isActive: true),
+        ]
+        XCTAssertFalse(wouldStrandUser(displays: displays))
+    }
+
+    func testWouldStrandUser_builtInOn() {
+        let displays = [makeDisplay(id: 1, isBuiltIn: true, isActive: true)]
+        XCTAssertFalse(wouldStrandUser(displays: displays))
+    }
+
+    func testWouldStrandUser_virtualExternalDoesNotCount() {
+        // A virtual/headless display must not be mistaken for a real recovery path.
+        let displays = [
+            makeDisplay(id: 1,  isBuiltIn: true,  isActive: false),
+            makeDisplay(id: 36, isBuiltIn: false, isActive: true, physicalSize: .zero),
+        ]
+        XCTAssertTrue(wouldStrandUser(displays: displays))
+    }
+
+    func testWouldStrandUser_noBuiltInFound() {
+        let displays = [makeDisplay(id: 2, isBuiltIn: false, isActive: true)]
+        XCTAssertFalse(wouldStrandUser(displays: displays))
+    }
+
     // MARK: §version
 
     func testVersionIsSemver() {
@@ -315,17 +353,4 @@ final class ELAPTests: XCTestCase {
         }
     }
 
-    // Access the internal stateFilePath for use in setUp/tearDown.
-    // It is a module-level `private let`, but @testable import exposes internal/private
-    // top-level vars. Actually stateFilePath is `private let`, we access it via the
-    // module's save/load/clear functions instead.
-}
-
-// Expose stateFilePath for the tearDown restore path.
-// Because stateFilePath is declared `private`, tests reach it indirectly:
-// - saveBuiltInDisplayID / clearBuiltInDisplayID / loadSavedBuiltInDisplayID are `internal`.
-// - The backup uses Foundation directly with the same computed path.
-private var stateFilePath: String {
-    FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent(".elap-builtin-id").path
 }
