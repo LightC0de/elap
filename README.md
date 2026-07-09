@@ -142,7 +142,36 @@ elap daemon uninstall
 
 ---
 
+## Menu Bar App
+
+A `MenuBarExtra` app (`ELAPApp`) wraps the CLI in a menu bar icon and panel — no terminal
+needed. It never mutates displays itself; every toggle runs the bundled `elap` CLI as a
+subprocess, so it stays reliable across hot-plugs and sleep/wake for as long as it runs.
+
+```sh
+make app            # → dist/ELAP.app
+open dist/ELAP.app
+```
+
+Panel features:
+- **Toggle + status** — turn the built-in display on/off; disabled with an explanation when
+  no external display is active.
+- **Auto-manage** — app-side equivalent of `elap watch`; warns if `elap daemon` is also
+  running, since the two would otherwise fight over the display.
+- **Launch at login** — via `SMAppService`; requires the app be run from `dist/ELAP.app` (or
+  `/Applications`), not `swift run`.
+- **Global hotkey** — toggle the built-in display from any app.
+
+See [.claude/app-spec.md](.claude/app-spec.md) for architecture details.
+
+For development, `swift run ELAPApp` runs the app unbundled (UI iteration only — launch at
+login needs the real bundle).
+
+---
+
 ## Keyboard Shortcut (Shortcuts.app)
+
+For CLI-only setups (no menu bar app), you can wire a system-wide hotkey directly to the CLI:
 
 1. Open **Shortcuts.app** → New Shortcut → Add Action → **Run Shell Script**
 2. Shell: `/bin/zsh`; Script: `/usr/local/bin/elap toggle --force`

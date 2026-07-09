@@ -16,6 +16,10 @@ final class DisplayStateModel: ObservableObject {
     @Published var isBusy: Bool = false
     @Published var lastErrorMessage: String?
 
+    // Set once by ELAPMenuBarApp after construction. Weak because the engine is owned
+    // alongside this model, not by it — avoids a retain cycle between the two.
+    weak var autoManageEngine: AutoManageEngine?
+
     private var pollTimer: Timer?
     private var reconfigToken: Bool = false
 
@@ -28,6 +32,7 @@ final class DisplayStateModel: ObservableObject {
         displays = fetchDisplays()
         hasRealExternal = hasActiveExternalDisplay(displays)
         builtInIsOn = builtInDisplay(in: displays)?.isActive ?? true
+        autoManageEngine?.evaluate(displays: displays)
     }
 
     func startPolling() {

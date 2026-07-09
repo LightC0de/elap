@@ -1,1 +1,1 @@
-public let elapVersion = "0.1.0"
+public let elapVersion = "0.2.0"

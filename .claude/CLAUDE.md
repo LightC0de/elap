@@ -4,16 +4,20 @@ Read at the start of every session. Keep it short and true; detail lives in the 
 
 ## What this is
 ELAP fully turns a MacBook's **built-in** display off (not just dimmed) while an external
-monitor is in use, and back on when needed. It ships as a Swift CLI.
+monitor is in use, and back on when needed. It ships as a Swift CLI (`ELAP`) and a menu bar
+app (`ELAPApp`), both built on a shared `ELAPCore` library.
 
 ## Tech stack
-Swift 5.9, Swift Package Manager (ArgumentParser), macOS 13+. Display control via public
-CoreGraphics APIs + the private SkyLight SPI resolved at runtime via `dlsym` — the riskiest,
-most macOS-version-sensitive code.
+Swift 5.9, Swift Package Manager (ArgumentParser, SwiftUI `MenuBarExtra`,
+`sindresorhus/KeyboardShortcuts`), macOS 13+. Display control via public CoreGraphics APIs +
+the private SkyLight SPI resolved at runtime via `dlsym` — the riskiest, most
+macOS-version-sensitive code, isolated in `ELAPCore`.
 
 ## Commands
 - Build: `swift build -c release` → `.build/release/elap`
-- Run: `swift run ELAP <subcommand>`
+- Run CLI: `swift run ELAP <subcommand>`
+- Run app: `swift run ELAPApp` (unbundled; UI iteration only — launch-at-login needs the real bundle)
+- Assemble the app bundle: `make app` → `dist/ELAP.app`
 
 ## Versioning
 - `elapVersion` (`Sources/ELAPCore/Version.swift`) is a manually-bumped semver string tied to
@@ -29,6 +33,7 @@ most macOS-version-sensitive code.
 ## More docs
 - [skills.md](skills.md) — conventions, display-layer safety, boundaries.
 - [cli-spec.md](cli-spec.md) — full CLI specification.
+- [app-spec.md](app-spec.md) — menu bar app architecture and safety.
 
 ## Required after every code change
 - **Always run `swift test` after making any code change** and confirm all tests pass before reporting the fix as done.

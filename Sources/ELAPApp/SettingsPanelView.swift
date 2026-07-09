@@ -1,8 +1,12 @@
 import SwiftUI
 import ELAPCore
+import KeyboardShortcuts
 
 struct SettingsPanelView: View {
     @EnvironmentObject private var displayState: DisplayStateModel
+    @EnvironmentObject private var autoManageEngine: AutoManageEngine
+    @EnvironmentObject private var loginItemManager: LoginItemManager
+    @AppStorage(AutoManageEngine.enabledDefaultsKey) private var autoManageEnabled = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -35,6 +39,51 @@ struct SettingsPanelView: View {
             .disabled(displayState.isBusy || (displayState.builtInIsOn && !displayState.hasRealExternal))
 
             Divider()
+
+            Toggle("Auto-manage", isOn: $autoManageEnabled)
+                .onChange(of: autoManageEnabled) { _ in
+                    autoManageEngine.evaluate(displays: displayState.displays)
+                }
+
+            if autoManageEngine.daemonConflictDetected {
+                Text("The `elap daemon` background watcher is also running and will fight with auto-manage. Run `elap daemon uninstall` or turn off auto-manage here.")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+
+            Divider()
+
+            if loginItemManager.state == .unsupported {
+                Text("Launch at login requires the bundled app (not `swift run`).")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Toggle("Launch at login", isOn: Binding(
+                    get: { loginItemManager.state.isEnabled },
+                    set: { _ in loginItemManager.toggle() }
+                ))
+                if loginItemManager.state == .requiresApproval {
+                    Button("Approve in System Settings…") {
+                        loginItemManager.openSystemSettingsLoginItems()
+                    }
+                    .font(.caption)
+                }
+                if let message = loginItemManager.lastErrorMessage {
+                    Text(message)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+            }
+
+            Divider()
+
+            HStack {
+                Text("Hotkey")
+                Spacer()
+                KeyboardShortcuts.Recorder(for: .toggleBuiltInDisplay)
+            }
+
+            Divider()
             Button("Quit") {
                 NSApplication.shared.terminate(nil)
             }
@@ -48,6 +97,7 @@ struct SettingsPanelView: View {
         .onAppear {
             displayState.refresh()
             displayState.startPolling()
+            loginItemManager.refresh()
         }
         .onDisappear {
             displayState.stopPolling()
