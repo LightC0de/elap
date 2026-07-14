@@ -36,7 +36,10 @@ struct ELAPMenuBarApp: App {
                 .environmentObject(autoManageEngine)
                 .environmentObject(loginItemManager)
         } label: {
+            // .id() forces SwiftUI to recreate this view (instead of diff-updating it) on every
+            // refresh — see DisplayStateModel.refreshToken for why.
             Image(systemName: displayState.builtInIsOn ? "display" : "display.slash")
+                .id(displayState.refreshToken)
         }
         .menuBarExtraStyle(.window)
     }

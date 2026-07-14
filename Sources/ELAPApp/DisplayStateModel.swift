@@ -15,6 +15,11 @@ final class DisplayStateModel: ObservableObject {
     @Published private(set) var hasRealExternal: Bool = false
     @Published var isBusy: Bool = false
     @Published var lastErrorMessage: String?
+    // Bumped on every refresh() so the menu bar label can force a fresh view (via `.id()`)
+    // instead of diff-updating in place — works around SwiftUI/AppKit leaving the status item's
+    // icon blank (though still clickable) after the menu bar migrates to another screen when the
+    // built-in display turns off.
+    @Published private(set) var refreshToken: Int = 0
 
     // Set once by ELAPMenuBarApp after construction. Weak because the engine is owned
     // alongside this model, not by it — avoids a retain cycle between the two.
@@ -33,6 +38,7 @@ final class DisplayStateModel: ObservableObject {
         hasRealExternal = hasActiveExternalDisplay(displays)
         builtInIsOn = builtInDisplay(in: displays)?.isActive ?? true
         autoManageEngine?.evaluate(displays: displays)
+        refreshToken += 1
     }
 
     func startPolling() {
